@@ -1,0 +1,32 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Training outputs
+output/
+runs/
+checkpoints/
+weights/
+*.pt
+*.pth
+
+# Dataset folder
+construction-ppe/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log

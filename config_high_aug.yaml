@@ -1,0 +1,31 @@
+# /home/matheus-andrade/Desktop/epi-with-keypoints/config_high_aug.yaml
+
+# Configurações Gerais do Ambiente e Saída
+general:
+  output_dir: "output_high_aug" # Saída específica para esta receita
+  dataset_dir: "construction-ppe"
+  device: "cuda"
+  seed: 42
+
+# Hiperparâmetros de Treinamento
+training:
+  epochs: 150 # Mais épocas para compensar augmentations mais agressivas
+  batch_size: 4
+  grad_accum_steps: 4
+  gradient_checkpointing: True
+  lr: 1e-4
+  lr_encoder: 1.5e-4
+
+# Configuração de Early Stopping
+early_stopping:
+  enabled: True
+  patience: 20 # Maior paciência para permitir mais tempo de convergência
+  min_delta: 0.001
+  use_ema: True
+
+# Configuração de Augmentations (Aumentos de Dados) - Mais agressivas
+augmentations:
+  HorizontalFlip: {p: 0.7} # Maior probabilidade
+  RandomBrightnessContrast: {p: 0.6} # Maior probabilidade
+  ShiftScaleRotate: {shift_limit: 0.1, scale_limit: 0.2, rotate_limit: 25, p: 0.7} # Limites e probabilidade maiores
+  # Poderia adicionar mais tipos de augmentations aqui se o RFDETRSmall suportar

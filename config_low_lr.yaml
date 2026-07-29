@@ -1,0 +1,30 @@
+# /home/matheus-andrade/Desktop/epi-with-keypoints/config_low_lr.yaml
+
+# Configurações Gerais do Ambiente e Saída
+general:
+  output_dir: "output_low_lr" # Saída específica para esta receita
+  dataset_dir: "construction-ppe"
+  device: "cuda"
+  seed: 42
+
+# Hiperparâmetros de Treinamento
+training:
+  epochs: 150 # Mais épocas para compensar o LR baixo
+  batch_size: 4
+  grad_accum_steps: 4
+  gradient_checkpointing: True
+  lr: 5e-5 # Learning rate mais baixo
+  lr_encoder: 7.5e-5 # Learning rate do encoder também mais baixo
+
+# Configuração de Early Stopping
+early_stopping:
+  enabled: True
+  patience: 25 # Maior paciência para permitir mais tempo de convergência
+  min_delta: 0.001
+  use_ema: True
+
+# Configuração de Augmentations (Aumentos de Dados) - Mantidas iguais
+augmentations:
+  HorizontalFlip: {p: 0.5}
+  RandomBrightnessContrast: {p: 0.4}
+  ShiftScaleRotate: {shift_limit: 0.05, scale_limit: 0.15, rotate_limit: 15, p: 0.5}

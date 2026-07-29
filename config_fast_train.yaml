@@ -1,0 +1,30 @@
+# /home/matheus-andrade/Desktop/epi-with-keypoints/config_fast_train.yaml
+
+# Configurações Gerais do Ambiente e Saída
+general:
+  output_dir: "output_fast_train" # Saída específica para esta receita
+  dataset_dir: "construction-ppe"
+  device: "cuda"
+  seed: 42
+
+# Hiperparâmetros de Treinamento
+training:
+  epochs: 50 # Menos épocas para um treinamento mais rápido
+  batch_size: 4
+  grad_accum_steps: 4
+  gradient_checkpointing: True
+  lr: 2e-4 # Learning rate um pouco mais alto
+  lr_encoder: 3e-4 # Learning rate do encoder também mais alto
+
+# Configuração de Early Stopping
+early_stopping:
+  enabled: True
+  patience: 8 # Menor paciência para parar mais cedo
+  min_delta: 0.001
+  use_ema: True
+
+# Configuração de Augmentations (Aumentos de Dados) - Mantidas iguais para focar nos hiperparâmetros
+augmentations:
+  HorizontalFlip: {p: 0.5}
+  RandomBrightnessContrast: {p: 0.4}
+  ShiftScaleRotate: {shift_limit: 0.05, scale_limit: 0.15, rotate_limit: 15, p: 0.5}

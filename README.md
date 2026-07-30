@@ -18,6 +18,29 @@ Imagem
 
 O detector treinado pode conter outras classes, mas a pipeline atual usa somente a classe positiva `helmet` ou `capacete`. As classes `person`, `none`, fundo e demais EPIs são ignoradas. As pessoas são obtidas exclusivamente pelo modelo de keypoints.
 
+### Por que combinar um modelo treinado com keypoints pré-treinados?
+
+O `RFDETRSmall` é treinado especificamente com as imagens e anotações de EPI do
+projeto. Por isso, ele aprende a localizar capacetes no cenário real de canteiro,
+com iluminação, distância, ângulos e tipos de equipamento presentes no dataset.
+Por outro lado, ele não oferece contexto corporal suficiente para responder a
+pergunta mais importante: **aquele capacete pertence a qual pessoa?**
+
+O `RFDETRKeypointPreview` já vem pré-treinado para localizar pessoas e os pontos
+da cabeça, como nariz, olhos e orelhas. Usá-lo evita a necessidade de anotar
+keypoints manualmente no dataset de EPI e permite validar se o capacete detectado
+está na região esperada da pessoa.
+
+Essa combinação traz três vantagens principais:
+
+- **Menos falsos positivos:** um objeto parecido com capacete, mas longe de uma
+  cabeça, pode ser marcado como inválido.
+- **Resultado por pessoa:** em vez de apenas contar capacetes na imagem, a
+  pipeline informa quais pessoas estão protegidas ou em alerta.
+- **Melhor aproveitamento do dataset:** o detector é especializado no EPI local,
+  enquanto o conhecimento corporal vem de um modelo de pose já treinado em grande
+  escala.
+
 ## Recursos
 
 - Treinamento configurável por YAML.

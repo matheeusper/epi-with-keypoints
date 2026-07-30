@@ -161,14 +161,23 @@ Estados possíveis: `validado`, `fora_da_regiao`, `nao_verificavel` e `ausente`.
 
 ```text
 .
-├── train.py                     # treinamento do RFDETRSmall
-├── infer_ppe_keypoints.py       # inferência e validação de capacete
-├── configs/                     # receitas de treinamento YAML
-├── outputSmall/                 # checkpoint local, não versionado
-├── construction-ppe/            # dataset local, não versionado
-├── images/                      # imagens de exemplo
-└── docs-rfdetr/                 # referência local do RF-DETR
+├── configs/                         # receitas YAML de treinamento
+│   ├── config_helmet_smoke_576.yaml # teste de VRAM em 576 px
+│   └── config_helmet_only_576.yaml  # treino final focado em capacete
+├── images/                          # imagens de entrada e exemplos anotados
+├── models/                          # pesos locais de inferência (ignorado pelo Git)
+│   └── helmet_only_576_best.pth
+├── construction-ppe/                # dataset original, ignorado pelo Git
+├── construction-ppe-helmet/         # dataset derivado de uma classe, ignorado pelo Git
+├── docs-rfdetr/                     # cópia local da documentação do RF-DETR
+├── infer_ppe_keypoints.py           # inferência e validação de capacete
+├── train.py                         # treinamento do RFDETRSmall
+├── pyproject.toml                   # dependências e metadados do projeto
+└── uv.lock                          # versões bloqueadas das dependências
 ```
+
+Os arquivos `*_ppe_keypoints.json` e imagens anotadas gerados durante a inferência
+são artefatos locais; escolha explicitamente quais exemplos deseja versionar.
 
 ## Limitações
 

@@ -104,6 +104,17 @@ images/
 
 Os keypoints são usados internamente e ficam ocultos por padrão para manter a imagem limpa.
 
+### Exemplos de resultado
+
+As imagens abaixo mostram a validação visual: caixas verdes indicam capacete
+validado e caixas vermelhas indicam alerta.
+
+![Exemplo de validação de capacete 1](images/image2_ppe_keypoints.jpg)
+
+![Exemplo de validação de capacete 2](images/image3_ppe_keypoints.jpg)
+
+![Exemplo de validação de capacete 3](images/image4_ppe_keypoints.jpg)
+
 ### Opções
 
 ```bash

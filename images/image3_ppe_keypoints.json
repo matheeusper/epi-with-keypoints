@@ -1,0 +1,46 @@
+{
+  "image": "images/image3.jpg",
+  "pessoas": [
+    {
+      "id": 1,
+      "epis": {
+        "capacete": {
+          "status": "ausente",
+          "detections": []
+        }
+      },
+      "epis_validados": 0
+    },
+    {
+      "id": 2,
+      "epis": {
+        "capacete": {
+          "status": "ausente",
+          "detections": []
+        }
+      },
+      "epis_validados": 0
+    },
+    {
+      "id": 3,
+      "epis": {
+        "capacete": {
+          "status": "ausente",
+          "detections": []
+        }
+      },
+      "epis_validados": 0
+    },
+    {
+      "id": 4,
+      "epis": {
+        "capacete": {
+          "status": "ausente",
+          "detections": []
+        }
+      },
+      "epis_validados": 0
+    }
+  ],
+  "epis_nao_associados": []
+}

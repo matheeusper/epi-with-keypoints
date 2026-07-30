@@ -1,0 +1,64 @@
+{
+  "image": "images/image.jpg",
+  "pessoas": [
+    {
+      "id": 1,
+      "epis": {
+        "capacete": {
+          "status": "validado",
+          "detections": [
+            {
+              "status": "validado",
+              "detection_index": 1,
+              "class_name": "helmet"
+            }
+          ]
+        }
+      },
+      "epis_validados": 1
+    },
+    {
+      "id": 2,
+      "epis": {
+        "capacete": {
+          "status": "validado",
+          "detections": [
+            {
+              "status": "validado",
+              "detection_index": 0,
+              "class_name": "helmet"
+            }
+          ]
+        }
+      },
+      "epis_validados": 1
+    },
+    {
+      "id": 3,
+      "epis": {
+        "capacete": {
+          "status": "ausente",
+          "detections": []
+        }
+      },
+      "epis_validados": 0
+    },
+    {
+      "id": 4,
+      "epis": {
+        "capacete": {
+          "status": "validado",
+          "detections": [
+            {
+              "status": "validado",
+              "detection_index": 2,
+              "class_name": "helmet"
+            }
+          ]
+        }
+      },
+      "epis_validados": 1
+    }
+  ],
+  "epis_nao_associados": []
+}

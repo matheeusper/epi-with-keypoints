@@ -7,12 +7,16 @@ general:
   device: "cuda"
   seed: 42
 
+# Configurações que definem a arquitetura e o consumo de memória do modelo
+model:
+  resolution: 512
+  gradient_checkpointing: true
+
 # Hiperparâmetros de Treinamento
 training:
   epochs: 50 # Menos épocas para um treinamento mais rápido
   batch_size: 4
   grad_accum_steps: 4
-  gradient_checkpointing: True
   lr: 2e-4 # Learning rate um pouco mais alto
   lr_encoder: 3e-4 # Learning rate do encoder também mais alto
 

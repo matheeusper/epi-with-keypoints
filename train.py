@@ -20,7 +20,7 @@ def set_seed(seed: int = 42):
 
 def main():
     parser = argparse.ArgumentParser(description="Treinar o modelo RFDETRSmall com configurações YAML.")
-    parser.add_argument("--config", type=str, default="config_base.yaml",
+    parser.add_argument("--config", type=str, default="configs/config_base.yaml",
                         help="Caminho para o arquivo de configuração YAML.")
     args = parser.parse_args()
 
@@ -32,6 +32,7 @@ def main():
 
     # Extrai as configurações para passar ao modelo
     general_config = config_data.get("general", {})
+    model_config = config_data.get("model", {})
     training_config = config_data.get("training", {})
     early_stopping_config = config_data.get("early_stopping", {})
     aug_config = config_data.get("augmentations", {})
@@ -44,7 +45,6 @@ def main():
         "epochs": training_config.get("epochs"),
         "batch_size": training_config.get("batch_size"),
         "grad_accum_steps": training_config.get("grad_accum_steps"),
-        "gradient_checkpointing": training_config.get("gradient_checkpointing"),
         "lr": training_config.get("lr"),
         "lr_encoder": training_config.get("lr_encoder"),
         "early_stopping": early_stopping_config.get("enabled"),
@@ -58,8 +58,16 @@ def main():
     os.makedirs(train_args["output_dir"], exist_ok=True)
     set_seed(general_config.get("seed"))
 
-    # 2. Inicializar e treinar o modelo
-    model = RFDETRSmall() # Assumindo que RFDETRSmall não precisa de argumentos no construtor
+    # 2. Inicializar o modelo.
+    # `resolution` e `gradient_checkpointing` pertencem à configuração do modelo,
+    # portanto devem ser passados ao construtor — não ao método `train()`.
+    model_args = {
+        "resolution": model_config.get("resolution"),
+        "gradient_checkpointing": model_config.get("gradient_checkpointing"),
+    }
+    model = RFDETRSmall(**{key: value for key, value in model_args.items() if value is not None})
+
+    # 3. Iniciar o treinamento com os hiperparâmetros da receita.
     model.train(**train_args)
 
 if __name__ == "__main__":

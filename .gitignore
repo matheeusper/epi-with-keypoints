@@ -19,11 +19,17 @@ weights/
 *.pt
 *.pth
 
+# Pesos locais são grandes demais para o GitHub sem Git LFS.
+models/
+*.ckpt
+
 # Dataset folder
 construction-ppe/
+construction-ppe-helmet/
 outputMedium/
 outputSmall/
 docs-rfdetr/
+
 
 # OS / editor files
 .DS_Store

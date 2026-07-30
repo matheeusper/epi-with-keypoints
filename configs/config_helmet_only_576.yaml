@@ -1,0 +1,32 @@
+# Treino de alta qualidade focado exclusivamente na classe positiva ``helmet``.
+general:
+  output_dir: "output_helmet_only_576"
+  dataset_dir: "construction-ppe-helmet"
+  device: "cuda"
+  seed: 42
+
+model:
+  resolution: 576
+  gradient_checkpointing: true
+
+training:
+  epochs: 120
+  batch_size: 1
+  grad_accum_steps: 16
+  lr: 1e-4
+  lr_encoder: 5e-5
+
+early_stopping:
+  enabled: true
+  patience: 20
+  min_delta: 0.001
+  use_ema: true
+
+augmentations:
+  HorizontalFlip: {p: 0.5}
+  RandomBrightnessContrast: {p: 0.35}
+  ShiftScaleRotate:
+    shift_limit: 0.03
+    scale_limit: 0.10
+    rotate_limit: 10
+    p: 0.35

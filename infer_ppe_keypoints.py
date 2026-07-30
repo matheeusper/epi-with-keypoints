@@ -20,7 +20,7 @@ from rfdetr import RFDETRKeypointPreview, RFDETRSmall
 
 
 # Caminho padrão para o melhor checkpoint obtido no treinamento de EPIs.
-DEFAULT_PPE_CHECKPOINT = Path("outputSmall/checkpoint_best_total.pth")
+DEFAULT_PPE_CHECKPOINT = Path("models/helmet_only_576_best.pth")
 # Traduções aceitas entre os nomes de classes em português e inglês.
 PPE_ALIASES = {
     "capacete": "capacete", "helmet": "capacete", "colete": "colete", "vest": "colete",
@@ -56,8 +56,14 @@ def parse_args() -> argparse.Namespace:
         help="Arquivo de saída. Padrão: <imagem>_ppe_keypoints.jpg.",
     )
     parser.add_argument("--report", type=Path, default=None, help="Relatório JSON de conformidade.")
-    parser.add_argument("--ppe-threshold", type=float, default=0.35, help="Limiar do detector de capacete.")
-    parser.add_argument("--keypoint-threshold", type=float, default=0.55, help="Limiar do detector de pessoas.")
+    parser.add_argument("--ppe-threshold", type=float, default=0.2, help="Limiar do detector de capacete.")
+    parser.add_argument("--keypoint-threshold", type=float, default=0.5, help="Limiar do detector de pessoas.")
+    parser.add_argument(
+        "--person-nms-iou",
+        type=float,
+        default=0.75,
+        help="IoU máximo entre caixas de pessoa antes de suprimir duplicatas; padrão 0.75.",
+    )
     parser.add_argument(
         "--keypoint-confidence",
         type=float,
@@ -183,6 +189,33 @@ def point_distance(point: np.ndarray, candidates: np.ndarray) -> float:
     return float(np.linalg.norm(candidates - point, axis=1).min())
 
 
+def box_iou(first: np.ndarray, second: np.ndarray) -> float:
+    """Calcula a interseção sobre união de duas caixas no formato ``xyxy``."""
+    left_top = np.maximum(first[:2], second[:2])
+    right_bottom = np.minimum(first[2:], second[2:])
+    intersection_size = np.maximum(0, right_bottom - left_top)
+    intersection = float(intersection_size[0] * intersection_size[1])
+    first_area = float(np.prod(np.maximum(0, first[2:] - first[:2])))
+    second_area = float(np.prod(np.maximum(0, second[2:] - second[:2])))
+    union = first_area + second_area - intersection
+    return intersection / union if union else 0.0
+
+
+def suppress_duplicate_people(keypoints: object, max_iou: float) -> np.ndarray:
+    """Mantém uma caixa por pessoa e remove detecções de pose quase idênticas."""
+    boxes = np.asarray(getattr(keypoints, "data", {}).get("xyxy", []), dtype=float)
+    if not len(boxes):
+        return np.array([], dtype=int)
+    scores = np.asarray(getattr(keypoints, "detection_confidence", np.ones(len(boxes))))
+    # O valor pode ser um score bruto, mas ainda é adequado para ordenar as duplicatas.
+    order = np.argsort(scores)[::-1]
+    kept: list[int] = []
+    for index in order:
+        if all(box_iou(boxes[index], boxes[kept_index]) < max_iou for kept_index in kept):
+            kept.append(int(index))
+    return np.array(sorted(kept), dtype=int)
+
+
 def validate_position(kind: str, center: np.ndarray, person: dict) -> str:
     """Valida a região do EPI com keypoints COCO; nunca infere ausência por oclusão."""
     # A altura da pessoa normaliza as distâncias e evita regras fixas em pixels.
@@ -208,15 +241,45 @@ def validate_position(kind: str, center: np.ndarray, person: dict) -> str:
     return "validado" if x1 <= center[0] <= x2 and y1 + height * .18 <= center[1] <= y1 + height * .78 else "fora_da_regiao"
 
 
-def fuse_detections(ppe_detections: object, keypoints: object, min_kp_confidence: float) -> tuple[list[dict], dict[int, dict]]:
+def helmet_person_distance(center: np.ndarray, person: dict) -> float:
+    """Mede quão compatível é um capacete com uma pessoa específica.
+
+    Quando há keypoints confiáveis da cabeça, a associação usa essa região. Isso
+    evita atribuir os dois capacetes à mesma pessoa quando caixas corporais de
+    pessoas próximas se sobrepõem. A caixa corporal é usada apenas como fallback.
+    """
+    x1, y1, x2, y2 = person["box"]
+    height = max(y2 - y1, 1.0)
+    head_points = person["points"][list(COCO_HEAD)][person["visible"][list(COCO_HEAD)]]
+    if len(head_points):
+        return point_distance(center, head_points) / height
+
+    # Sem uma cabeça confiável, preserva o comportamento anterior com peso menor.
+    body_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+    inside_box = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
+    return 1.0 + (0.0 if inside_box else float(np.linalg.norm(center - body_center)) / height)
+
+
+def fuse_detections(
+    ppe_detections: object,
+    keypoints: object,
+    min_kp_confidence: float,
+    person_indices: np.ndarray,
+) -> tuple[list[dict], dict[int, dict]]:
     """Associa EPIs à caixa de pessoa mais próxima e valida a geometria corporal."""
     # Cada pessoa possui uma caixa corporal e uma lista de keypoints prevista pelo modelo de pose.
     boxes = getattr(keypoints, "data", {}).get("xyxy")
     if boxes is None:
         return [], {}
-    points = np.asarray(getattr(keypoints, "xy"))
-    confidences = np.asarray(getattr(keypoints, "keypoint_confidence"))
-    visibility = np.asarray(getattr(keypoints, "visible", np.ones(confidences.shape, dtype=bool)))
+    all_points = np.asarray(getattr(keypoints, "xy"))
+    all_confidences = np.asarray(getattr(keypoints, "keypoint_confidence"))
+    all_visibility = np.asarray(
+        getattr(keypoints, "visible", np.ones(all_confidences.shape, dtype=bool))
+    )
+    boxes = np.asarray(boxes)[person_indices]
+    points = all_points[person_indices]
+    confidences = all_confidences[person_indices]
+    visibility = all_visibility[person_indices]
     # Monta a estrutura que será escrita no relatório JSON ao final da execução.
     people = [
         {"id": index + 1, "box": np.asarray(box, dtype=float), "points": points[index],
@@ -237,14 +300,8 @@ def fuse_detections(ppe_detections: object, keypoints: object, min_kp_confidence
             continue
         # O centro da caixa do capacete decide a qual pessoa ele pertence.
         center = (box[:2] + box[2:]) / 2
-        distances = []
-        for person in people:
-            x1, y1, x2, y2 = person["box"]
-            inside = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
-            box_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
-            # Uma caixa que contém o centro tem prioridade; senão usa-se a pessoa mais próxima.
-            distances.append((0 if inside else float(np.linalg.norm(center - box_center)), person))
-        person = min(distances, key=lambda item: item[0])[1]
+        # Associa pelo keypoint de cabeça mais próximo; a caixa corporal é fallback.
+        person = min(people, key=lambda candidate: helmet_person_distance(center, candidate))
         status = "ausente_detectado" if missing_kind else validate_position(kind, center, person)
         item = {"status": status, "detection_index": index, "class_name": name}
         person["ppe"][kind]["detections"].append(item)
@@ -302,14 +359,18 @@ def draw_keypoints(
     image_size: tuple[int, int],
     people: list[dict],
     draw_points: bool,
+    person_indices: np.ndarray,
 ) -> int:
     """Desenha caixas de alerta das pessoas e, opcionalmente, seus keypoints."""
-    points_per_person = np.asarray(getattr(keypoints, "xy"))
-    point_confidences = np.asarray(getattr(keypoints, "keypoint_confidence"))
-    person_confidences = np.asarray(getattr(keypoints, "detection_confidence"))
-    visible = np.asarray(
-        getattr(keypoints, "visible", np.ones(point_confidences.shape, dtype=bool))
+    all_points = np.asarray(getattr(keypoints, "xy"))
+    all_point_confidences = np.asarray(getattr(keypoints, "keypoint_confidence"))
+    all_visible = np.asarray(
+        getattr(keypoints, "visible", np.ones(all_point_confidences.shape, dtype=bool))
     )
+    points_per_person = all_points[person_indices]
+    point_confidences = all_point_confidences[person_indices]
+    person_confidences = np.asarray(getattr(keypoints, "detection_confidence"))[person_indices]
+    visible = all_visible[person_indices]
 
     for person_index, (points, confidences, is_visible, person_confidence) in enumerate(
         zip(points_per_person, point_confidences, visible, person_confidences), start=1
@@ -323,7 +384,7 @@ def draw_keypoints(
                     draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="#007aff")
 
         # A caixa azul identifica a pessoa; as caixas vermelhas identificam os EPIs.
-        boxes = getattr(keypoints, "data", {}).get("xyxy")
+        boxes = np.asarray(getattr(keypoints, "data", {}).get("xyxy", []))[person_indices]
         if draw_person_boxes and boxes is not None and len(boxes) >= person_index:
             x1, y1, x2, y2 = np.asarray(boxes[person_index - 1]).astype(float)
             # A pessoa fica verde apenas quando há capacete na região esperada da cabeça.
@@ -370,8 +431,9 @@ def main() -> None:
     annotated = image.copy()
     draw = ImageDraw.Draw(annotated)
     occupied_labels: list[tuple[int, int, int, int]] = []
+    person_indices = suppress_duplicate_people(people_keypoints, args.person_nms_iou)
     people, validation = fuse_detections(
-        ppe_detections, people_keypoints, args.keypoint_confidence
+        ppe_detections, people_keypoints, args.keypoint_confidence, person_indices
     )
     ppe_count = draw_ppe(
         draw, ppe_detections, occupied_labels, annotated.size, validation
@@ -385,6 +447,7 @@ def main() -> None:
         annotated.size,
         people,
         args.draw_keypoints,
+        person_indices,
     )
     annotated.save(output_path)
 

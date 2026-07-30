@@ -63,15 +63,17 @@ Para a validação atual, rotule a classe positiva de capacete como `helmet` ou 
 O [train.py](train.py) carrega a receita, fixa a seed, instancia `RFDETRSmall` e inicia o treinamento.
 
 ```bash
-uv run python train.py --config config_base.yaml
+uv run python train.py --config configs/config_base.yaml
 ```
 
 | Receita | Uso |
 | --- | --- |
-| `config_base.yaml` | Treinamento padrão, até 100 épocas. |
-| `config_fast_train.yaml` | Teste rápido do pipeline. |
-| `config_high_aug.yaml` | Aumentos de dados mais fortes. |
-| `config_low_lr.yaml` | Ajuste fino com learning rate menor. |
+| `configs/config_base.yaml` | Treinamento padrão, até 100 épocas. |
+| `configs/config_fast_train.yaml` | Teste rápido do pipeline. |
+| `configs/config_high_aug.yaml` | Aumentos de dados mais fortes. |
+| `configs/config_low_lr.yaml` | Ajuste fino com learning rate menor. |
+| `configs/config_helmet_smoke_576.yaml` | Teste de VRAM e pipeline em 576 px. |
+| `configs/config_helmet_only_576.yaml` | Treinamento de alta qualidade, apenas capacete. |
 
 As receitas contêm `general`, `training`, `early_stopping` e `augmentations`. Ajuste `dataset_dir`, `device`, `epochs`, `batch_size` e `lr` conforme seu ambiente.
 
@@ -150,7 +152,7 @@ Estados possíveis: `validado`, `fora_da_regiao`, `nao_verificavel` e `ausente`.
 .
 ├── train.py                     # treinamento do RFDETRSmall
 ├── infer_ppe_keypoints.py       # inferência e validação de capacete
-├── config_*.yaml                # receitas de treinamento
+├── configs/                     # receitas de treinamento YAML
 ├── outputSmall/                 # checkpoint local, não versionado
 ├── construction-ppe/            # dataset local, não versionado
 ├── images/                      # imagens de exemplo

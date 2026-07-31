@@ -941,12 +941,14 @@ name = "epi-with-keypoints"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "opencv-python-headless" },
     { name = "rfdetr", extra = ["loggers", "train"] },
     { name = "torch" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "opencv-python-headless", specifier = ">=4.10.0.84" },
     { name = "rfdetr", extras = ["loggers", "train"], specifier = ">=1.8.3" },
     { name = "torch", specifier = ">=2.13.0" },
 ]

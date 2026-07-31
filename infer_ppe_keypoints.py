@@ -4,8 +4,9 @@ O modelo treinado detecta os capacetes. O modelo pré-treinado de keypoints dete
 as pessoas e localiza cabeça, braços e pernas. A união dos resultados permite
 atribuir um capacete à pessoa correta e verificar se ele está na região da cabeça.
 
-Exemplo:
+Exemplos:
     uv run python infer_ppe_keypoints.py --image caminho/para/imagem.jpg
+    uv run python infer_ppe_keypoints.py --video caminho/para/video.mp4
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import argparse
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from rfdetr import RFDETRKeypointPreview, RFDETRSmall
@@ -21,6 +23,7 @@ from rfdetr import RFDETRKeypointPreview, RFDETRSmall
 
 # Caminho padrão para o melhor checkpoint obtido no treinamento de EPIs.
 DEFAULT_PPE_CHECKPOINT = Path("models/helmet_only_576_best.pth")
+DEFAULT_OUTPUT_DIR = Path("outputs")
 # Traduções aceitas entre os nomes de classes em português e inglês.
 PPE_ALIASES = {
     "capacete": "capacete", "helmet": "capacete", "colete": "colete", "vest": "colete",
@@ -40,9 +43,11 @@ COCO_ANKLES = (15, 16)
 def parse_args() -> argparse.Namespace:
     """Lê os parâmetros informados na linha de comando."""
     parser = argparse.ArgumentParser(
-        description="Detecta EPIs e keypoints de pessoas em uma imagem."
+        description="Detecta EPIs e keypoints de pessoas em imagens ou vídeos."
     )
-    parser.add_argument("--image", type=Path, required=True, help="Imagem de entrada.")
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--image", type=Path, help="Imagem de entrada.")
+    input_group.add_argument("--video", type=Path, help="Vídeo de entrada.")
     parser.add_argument(
         "--ppe-checkpoint",
         type=Path,
@@ -53,11 +58,11 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="Arquivo de saída. Padrão: <imagem>_ppe_keypoints.jpg.",
+        help="Arquivo de saída. Padrão: outputs/<entrada>/annotated/<entrada>_ppe_keypoints.*.",
     )
     parser.add_argument("--report", type=Path, default=None, help="Relatório JSON de conformidade.")
-    parser.add_argument("--ppe-threshold", type=float, default=0.2, help="Limiar do detector de capacete.")
-    parser.add_argument("--keypoint-threshold", type=float, default=0.5, help="Limiar do detector de pessoas.")
+    parser.add_argument("--ppe-threshold", type=float, default=0.35, help="Limiar do detector de capacete.")
+    parser.add_argument("--keypoint-threshold", type=float, default=0.55, help="Limiar do detector de pessoas.")
     parser.add_argument(
         "--person-nms-iou",
         type=float,
@@ -80,7 +85,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Desenha os keypoints; por padrão eles ficam ocultos para uma imagem minimalista.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--codec",
+        default="mp4v",
+        help="Codec de quatro caracteres do vídeo de saída (padrão: mp4v).",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Processa no máximo esta quantidade de quadros (útil para testes).",
+    )
+    args = parser.parse_args()
+    if len(args.codec) != 4:
+        parser.error("--codec deve ter exatamente quatro caracteres, por exemplo mp4v.")
+    if args.max_frames is not None and args.max_frames <= 0:
+        parser.error("--max-frames deve ser maior que zero.")
+    return args
 
 
 def class_name(detections: object, index: int, fallback: str) -> str:
@@ -391,7 +412,9 @@ def draw_keypoints(
             helmet_status = people[person_index - 1]["ppe"]["capacete"]["status"]
             is_protected = helmet_status == "validado"
             color = "#34c759" if is_protected else "#ff3b30"
-            label = f"P{person_index} ✓" if is_protected else f"P{person_index} !"
+            # Usa somente caracteres ASCII, pois a fonte padrão do Pillow não
+            # possui cobertura garantida para símbolos como "✓".
+            label = f"P{person_index} OK" if is_protected else f"P{person_index} ALERTA"
             draw.rectangle((x1, y1, x2, y2), outline=color, width=3)
             draw_label(
                 draw,
@@ -404,31 +427,17 @@ def draw_keypoints(
     return len(points_per_person)
 
 
-def main() -> None:
-    """Carrega os modelos, executa as inferências, desenha o resultado e salva o relatório."""
-    args = parse_args()
-    if not args.image.is_file():
-        raise FileNotFoundError(f"Imagem não encontrada: {args.image}")
-    if not args.ppe_checkpoint.is_file():
-        raise FileNotFoundError(f"Checkpoint de EPIs não encontrado: {args.ppe_checkpoint}")
-
-    # Quando não informado, o resultado é salvo ao lado da imagem de entrada.
-    output_path = args.output or args.image.with_name(f"{args.image.stem}_ppe_keypoints.jpg")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # RF-DETR recebe a imagem em RGB como array NumPy.
-    image = Image.open(args.image).convert("RGB")
-    image_array = np.asarray(image)
-
-    # O checkpoint final contém a arquitetura, resolução e as classes do treino de EPIs.
-    ppe_model = RFDETRSmall.from_checkpoint(str(args.ppe_checkpoint))
-    keypoint_model = RFDETRKeypointPreview()
-
-    # Executa os dois modelos sobre a mesma imagem antes de associar os resultados.
+def annotate_frame(
+    image_array: np.ndarray,
+    ppe_model: RFDETRSmall,
+    keypoint_model: RFDETRKeypointPreview,
+    args: argparse.Namespace,
+) -> tuple[Image.Image, int, int, dict]:
+    """Executa a pipeline completa em um frame RGB e retorna a imagem e o relatório."""
     ppe_detections = ppe_model.predict(image_array, threshold=args.ppe_threshold)
     people_keypoints = keypoint_model.predict(image_array, threshold=args.keypoint_threshold)
 
-    annotated = image.copy()
+    annotated = Image.fromarray(image_array).convert("RGB")
     draw = ImageDraw.Draw(annotated)
     occupied_labels: list[tuple[int, int, int, int]] = []
     person_indices = suppress_duplicate_people(people_keypoints, args.person_nms_iou)
@@ -449,12 +458,7 @@ def main() -> None:
         args.draw_keypoints,
         person_indices,
     )
-    annotated.save(output_path)
-
-    # O JSON preserva os detalhes que não são exibidos na anotação minimalista.
-    report_path = args.report or output_path.with_suffix(".json")
     report = {
-        "image": str(args.image),
         "pessoas": [
             {"id": person["id"], "epis": person["ppe"], "epis_validados": person["conformes"]}
             for person in people
@@ -463,12 +467,137 @@ def main() -> None:
             index for index, result in validation.items() if result["person_id"] is None
         ],
     }
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return annotated, ppe_count, people_count, report
+
+
+def load_models(checkpoint: Path) -> tuple[RFDETRSmall, RFDETRKeypointPreview]:
+    """Carrega os modelos somente uma vez, inclusive durante inferência em vídeo."""
+    return RFDETRSmall.from_checkpoint(str(checkpoint)), RFDETRKeypointPreview()
+
+
+def save_report(path: Path, report: dict) -> None:
+    """Grava o relatório JSON garantindo que o diretório exista."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def default_output_paths(input_path: Path, extension: str) -> tuple[Path, Path]:
+    """Organiza cada inferência em mídia anotada e relatório separados.
+
+    Exemplo para ``videos/obra.mp4``:
+    ``outputs/obra/annotated/obra_ppe_keypoints.mp4`` e
+    ``outputs/obra/reports/obra_ppe_keypoints.json``.
+    """
+    result_dir = DEFAULT_OUTPUT_DIR / input_path.stem
+    filename = f"{input_path.stem}_ppe_keypoints"
+    return (
+        result_dir / "annotated" / f"{filename}{extension}",
+        result_dir / "reports" / f"{filename}.json",
+    )
+
+
+def infer_image(args: argparse.Namespace, ppe_model: RFDETRSmall, keypoint_model: RFDETRKeypointPreview) -> None:
+    """Processa uma única imagem e preserva o formato de saída original."""
+    assert args.image is not None
+    default_output_path, default_report_path = default_output_paths(args.image, ".jpg")
+    output_path = args.output or default_output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image_array = np.asarray(Image.open(args.image).convert("RGB"))
+    annotated, ppe_count, people_count, report = annotate_frame(
+        image_array, ppe_model, keypoint_model, args
+    )
+    annotated.save(output_path)
+
+    report_path = args.report or (output_path.with_suffix(".json") if args.output else default_report_path)
+    report["image"] = str(args.image)
+    save_report(report_path, report)
 
     print(f"EPIs detectados: {ppe_count}")
     print(f"Pessoas com keypoints: {people_count}")
     print(f"Imagem anotada salva em: {output_path}")
     print(f"Relatório de conformidade salvo em: {report_path}")
+
+
+def infer_video(args: argparse.Namespace, ppe_model: RFDETRSmall, keypoint_model: RFDETRKeypointPreview) -> None:
+    """Processa todos os quadros de um vídeo e escreve uma cópia anotada em MP4."""
+    assert args.video is not None
+    default_output_path, default_report_path = default_output_paths(args.video, ".mp4")
+    output_path = args.output or default_output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    capture = cv2.VideoCapture(str(args.video))
+    if not capture.isOpened():
+        raise RuntimeError(f"Não foi possível abrir o vídeo: {args.video}")
+
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    fps = fps if np.isfinite(fps) and fps > 0 else 30.0
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if width <= 0 or height <= 0:
+        capture.release()
+        raise RuntimeError(f"O vídeo não possui dimensões válidas: {args.video}")
+    writer = cv2.VideoWriter(
+        str(output_path), cv2.VideoWriter_fourcc(*args.codec), fps, (width, height)
+    )
+    if not writer.isOpened():
+        capture.release()
+        raise RuntimeError(
+            f"Não foi possível criar o vídeo de saída: {output_path}. "
+            "Tente --codec avc1 ou outro codec disponível no sistema."
+        )
+
+    frames: list[dict] = []
+    frame_index = 0
+    total_ppe = 0
+    total_people = 0
+    try:
+        while args.max_frames is None or frame_index < args.max_frames:
+            ok, frame_bgr = capture.read()
+            if not ok:
+                break
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            annotated, ppe_count, people_count, frame_report = annotate_frame(
+                frame_rgb, ppe_model, keypoint_model, args
+            )
+            writer.write(cv2.cvtColor(np.asarray(annotated), cv2.COLOR_RGB2BGR))
+            frame_report.update({"quadro": frame_index, "tempo_segundos": frame_index / fps})
+            frames.append(frame_report)
+            total_ppe += ppe_count
+            total_people += people_count
+            frame_index += 1
+            print(f"Quadro {frame_index}: {ppe_count} EPIs, {people_count} pessoas", flush=True)
+    finally:
+        capture.release()
+        writer.release()
+
+    if not frame_index:
+        raise RuntimeError(f"Nenhum quadro pôde ser lido do vídeo: {args.video}")
+    report_path = args.report or (output_path.with_suffix(".json") if args.output else default_report_path)
+    save_report(report_path, {
+        "video": str(args.video),
+        "fps": fps,
+        "quadros_processados": frame_index,
+        "epis_detectados_total": total_ppe,
+        "pessoas_detectadas_total": total_people,
+        "quadros": frames,
+    })
+    print(f"Quadros processados: {frame_index}")
+    print(f"Vídeo anotado salvo em: {output_path}")
+    print(f"Relatório de conformidade salvo em: {report_path}")
+
+
+def main() -> None:
+    """Carrega modelos e encaminha a inferência para imagem ou vídeo."""
+    args = parse_args()
+    input_path = args.image or args.video
+    if input_path is None or not input_path.is_file():
+        raise FileNotFoundError(f"Arquivo de entrada não encontrado: {input_path}")
+    if not args.ppe_checkpoint.is_file():
+        raise FileNotFoundError(f"Checkpoint de EPIs não encontrado: {args.ppe_checkpoint}")
+    ppe_model, keypoint_model = load_models(args.ppe_checkpoint)
+    if args.image is not None:
+        infer_image(args, ppe_model, keypoint_model)
+    else:
+        infer_video(args, ppe_model, keypoint_model)
 
 
 if __name__ == "__main__":

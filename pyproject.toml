@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.10"
 dependencies = [
+    "opencv-python-headless>=4.10.0.84",
     "rfdetr[loggers,train]>=1.8.3",
     "torch>=2.13.0",
 ]

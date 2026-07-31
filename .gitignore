@@ -13,6 +13,8 @@ __pycache__/
 
 # Training outputs
 output/
+outputs/
+output_*/
 runs/
 checkpoints/
 weights/
@@ -29,6 +31,12 @@ construction-ppe-helmet/
 outputMedium/
 outputSmall/
 docs-rfdetr/
+
+# Vídeos de entrada e resultados de inferência podem ser muito grandes para o Git.
+videos/
+*.mp4
+*.avi
+*.mov
 
 
 # OS / editor files

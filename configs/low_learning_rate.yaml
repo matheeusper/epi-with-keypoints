@@ -1,0 +1,28 @@
+# Receita multiclasse com learning rate reduzido.
+general:
+  output_dir: "output_low_lr"
+  dataset_dir: "datasets/PPE_Detection"
+  device: "cuda"
+  seed: 42
+
+model:
+  resolution: 512
+  gradient_checkpointing: true
+
+training:
+  epochs: 150
+  batch_size: 4
+  grad_accum_steps: 4
+  lr: 5e-5
+  lr_encoder: 7.5e-5
+
+early_stopping:
+  enabled: true
+  patience: 25
+  min_delta: 0.001
+  use_ema: true
+
+augmentations:
+  HorizontalFlip: {p: 0.5}
+  RandomBrightnessContrast: {p: 0.4}
+  ShiftScaleRotate: {shift_limit: 0.05, scale_limit: 0.15, rotate_limit: 15, p: 0.5}

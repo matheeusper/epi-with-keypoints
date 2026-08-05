@@ -15,7 +15,10 @@ htmlcov/
 # Jupyter / notebooks
 .ipynb_checkpoints/
 
-# Training outputs
+# Local datasets
+datasets/
+
+# Training and inference outputs
 output/
 outputs/
 output_*/
@@ -31,13 +34,6 @@ weights/
 models/
 *.ckpt
 .hf-release-*/
-
-# Dataset folder
-construction-ppe/
-construction-ppe-helmet/
-outputMedium/
-outputSmall/
-docs-rfdetr/
 
 # Vídeos de entrada e resultados de inferência podem ser muito grandes para o Git.
 videos/
@@ -55,6 +51,8 @@ videos/
 Thumbs.db
 .vscode/
 .idea/
+/.agents/
+/.codex/
 
 # Logs
 *.log

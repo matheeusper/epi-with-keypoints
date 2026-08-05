@@ -20,6 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import supervision as sv
+import torch
 from PIL import Image, ImageDraw, ImageFont
 from rfdetr import RFDETRKeypointPreview, RFDETRSmall
 from trackers import ByteTrackTracker
@@ -657,7 +658,12 @@ def annotate_frame(
 
 def load_models(checkpoint: Path) -> tuple[RFDETRSmall, RFDETRKeypointPreview]:
     """Carrega os modelos somente uma vez, inclusive durante inferência em vídeo."""
-    return RFDETRSmall.from_checkpoint(str(checkpoint)), RFDETRKeypointPreview()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Dispositivo de inferência: {device}")
+    return (
+        RFDETRSmall.from_checkpoint(str(checkpoint), device=device),
+        RFDETRKeypointPreview(device=device),
+    )
 
 
 def save_report(path: Path, report: dict) -> None:

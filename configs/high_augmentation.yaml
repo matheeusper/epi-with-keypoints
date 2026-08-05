@@ -1,0 +1,28 @@
+# Receita multiclasse com aumentos de dados mais agressivos.
+general:
+  output_dir: "output_high_aug"
+  dataset_dir: "datasets/PPE_Detection"
+  device: "cuda"
+  seed: 42
+
+model:
+  resolution: 512
+  gradient_checkpointing: true
+
+training:
+  epochs: 150
+  batch_size: 4
+  grad_accum_steps: 4
+  lr: 1e-4
+  lr_encoder: 1.5e-4
+
+early_stopping:
+  enabled: true
+  patience: 20
+  min_delta: 0.001
+  use_ema: true
+
+augmentations:
+  HorizontalFlip: {p: 0.7}
+  RandomBrightnessContrast: {p: 0.6}
+  ShiftScaleRotate: {shift_limit: 0.1, scale_limit: 0.2, rotate_limit: 25, p: 0.7}

@@ -16,3 +16,4 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/matheeusper/epi-with-keypoints"
 Model = "https://huggingface.co/matheeusper/epi-with-keypoints"
+Dataset = "https://huggingface.co/datasets/51ddhesh/PPE_Detection"

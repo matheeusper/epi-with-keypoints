@@ -1,5 +1,5 @@
 ---
-license: agpl-3.0
+license: cc-by-4.0
 library_name: rfdetr
 pipeline_tag: object-detection
 tags:
@@ -10,7 +10,24 @@ tags:
   - helmet-detection
   - rf-detr
 datasets:
-  - Ultralytics/Construction-PPE
+  - 51ddhesh/PPE_Detection
+model-index:
+  - name: RF-DETR Small Helmet 576
+    results:
+      - task:
+          type: object-detection
+          name: Object Detection
+        dataset:
+          name: PPE_Detection
+          type: 51ddhesh/PPE_Detection
+          split: test
+        metrics:
+          - type: map
+            value: 0.5890050577
+            name: mAP@50:95
+          - type: map
+            value: 0.8961793948
+            name: mAP@50
 ---
 
 # RF-DETR Small — detecção de capacetes em obras
@@ -22,7 +39,7 @@ a detecção de capacete com keypoints corporais e tracking temporal para produz
 um resultado por pessoa em imagens e vídeos.
 
 Este repositório no Hugging Face contém apenas a release do modelo. O código de
-treinamento, avaliação, inferência, tracking, testes e a documentação completa são
+treinamento, avaliação, inferência, tracking e a documentação completa são
 mantidos no [repositório GitHub](https://github.com/matheeusper/epi-with-keypoints).
 
 ## Arquivo
@@ -69,19 +86,19 @@ detections = model.predict("imagem.jpg", threshold=0.35)
 
 ## Métricas
 
-Avaliação em 141 imagens e 192 capacetes do split de teste derivado do
-Construction-PPE:
+Avaliação em 1.234 imagens e 597 capacetes do split de teste completo do
+PPE_Detection, incluindo imagens negativas sem capacete:
 
 | Métrica | Resultado |
 | --- | ---: |
-| mAP@[0.50:0.95] | 55,53% |
-| mAP@0.50 | 95,00% |
-| mAP@0.75 | 58,66% |
-| mAR@100 | 66,30% |
-| Precisão@0.50 | 93,75% |
-| Recall@0.50 | 93,75% |
-| F1@0.50 | 93,75% |
-| Confiança no melhor F1 | 0,435 |
+| mAP@[0.50:0.95] | 58,90% |
+| mAP@0.50 | 89,62% |
+| mAP@0.75 | 67,41% |
+| mAR@100 | 74,09% |
+| Precisão@0.50 | 86,68% |
+| Recall@0.50 | 90,45% |
+| F1@0.50 | 88,52% |
+| Confiança no melhor F1 | 0,570 |
 
 ## Treinamento
 
@@ -89,8 +106,8 @@ Construction-PPE:
 - Resolução: 576 px.
 - Classe: `helmet` (`id=0`).
 - Seed: 42.
-- Batch efetivo: 16 (`batch_size=1`, `grad_accum_steps=16`).
-- Checkpoint selecionado após 11 épocas e 781 passos globais.
+- Batch efetivo: 16 (`batch_size=4`, `grad_accum_steps=4`).
+- Checkpoint regular selecionado na época 19, após 20 épocas e 2.000 passos globais.
 
 ## Limitações e uso responsável
 
@@ -100,5 +117,6 @@ Ele detecta capacetes, mas não deve ser usado isoladamente para decisões disci
 ou outras decisões críticas de segurança. Valide e calibre o limiar com imagens do
 ambiente de implantação.
 
-O dataset de origem Construction-PPE é distribuído sob AGPL-3.0; este repositório
-adota a mesma licença para o checkpoint derivado.
+O dataset de origem
+[51ddhesh/PPE_Detection](https://huggingface.co/datasets/51ddhesh/PPE_Detection)
+é distribuído sob CC BY 4.0; o checkpoint derivado é publicado sob a mesma licença.

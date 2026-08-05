@@ -7,6 +7,10 @@ env/
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Jupyter / notebooks
 .ipynb_checkpoints/
@@ -20,10 +24,13 @@ checkpoints/
 weights/
 *.pt
 *.pth
+*.safetensors
+*.onnx
 
 # Pesos locais são grandes demais para o GitHub sem Git LFS.
 models/
 *.ckpt
+.hf-release-*/
 
 # Dataset folder
 construction-ppe/
@@ -38,6 +45,10 @@ videos/
 *.avi
 *.mov
 
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
 
 # OS / editor files
 .DS_Store

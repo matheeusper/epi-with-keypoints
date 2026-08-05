@@ -4,6 +4,15 @@ Projeto de visão computacional para canteiros de obras. Ele treina um `RFDETRSm
 para detectar capacetes e o combina com `RFDETRKeypointPreview` para validar o uso
 do capacete por pessoa.
 
+**Código, testes e receitas:** este repositório no
+[GitHub](https://github.com/matheeusper/epi-with-keypoints) · **Checkpoint treinado
+e model card:** [Hugging Face Hub](https://huggingface.co/matheeusper/epi-with-keypoints)
+
+O GitHub não armazena pesos, datasets ou vídeos completos. O Hugging Face não
+duplica o código da aplicação: ele mantém somente a release reproduzível do
+modelo. A fronteira e o processo de publicação estão documentados em
+[docs/PUBLISHING.md](docs/PUBLISHING.md).
+
 ## Funcionamento
 
 ```text
@@ -17,6 +26,10 @@ Imagem
                                              ▼
                        imagem anotada + relatório JSON
 ```
+
+Em vídeos, as caixas de pessoa passam também pelo ByteTrack antes da associação.
+O tracker mantém um ID estável para cada pessoa e reaproveita o estado durante
+oclusões curtas; imagens continuam sendo avaliadas de forma independente.
 
 O checkpoint deste projeto possui uma única classe positiva, `helmet`. As pessoas
 são obtidas exclusivamente pelo modelo pré-treinado de keypoints.
@@ -50,6 +63,8 @@ Essa combinação traz três vantagens principais:
 - Receitas para treino padrão, rápido, com aumentos agressivos e learning rate menor.
 - Inferência combinada de capacete e pose humana.
 - Associação automática do capacete à pessoa mais próxima.
+- Tracking de pessoas com IDs persistentes em vídeos.
+- Estabilização temporal dos alertas de ausência de capacete.
 - Validação geométrica pela região da cabeça.
 - Alertas minimalistas e relatório JSON por pessoa.
 
@@ -124,8 +139,12 @@ consideravelmente mais lento).
 
 O treino recomendado grava o melhor modelo em
 `output_helmet_only_576/checkpoint_best_total.pth`. Pesos não são versionados no
-repositório: informe esse caminho com `--ppe-checkpoint` ou copie o arquivo para
-`models/helmet_only_576_best.pth`, que é o caminho padrão da inferência.
+GitHub. O checkpoint publicado está disponível em
+[matheeusper/epi-with-keypoints](https://huggingface.co/matheeusper/epi-with-keypoints)
+no Hugging Face Hub. Se `models/helmet_only_576_best.pth` não existir, os scripts
+de inferência e avaliação baixam esse arquivo automaticamente. Também é possível
+informar um checkpoint local com `--ppe-checkpoint` ou outro repositório com
+`--hf-repo-id`.
 
 ## Métricas do treinamento
 
@@ -177,9 +196,19 @@ uv run python infer_ppe_keypoints.py \
   --ppe-checkpoint output_helmet_only_576/checkpoint_best_total.pth
 ```
 
+Sem `--ppe-checkpoint`, o modelo é usado de `models/` ou baixado automaticamente
+do Hugging Face Hub na primeira execução:
+
+```bash
+uv run python infer_ppe_keypoints.py --image images/image2.jpg
+```
+
 Também é possível processar um vídeo completo. Os modelos são carregados uma única
 vez e aplicados a cada quadro; a saída preserva a taxa de quadros do arquivo de
-entrada.
+entrada. Por padrão, identidades oclusas são conservadas por até 1 segundo e uma
+ausência só vira alerta quando ocupa a maioria estrita de uma janela de 1 segundo.
+Detecções de pessoa abaixo do limiar principal podem prolongar um track existente,
+mas não são desenhadas nem contam como ausência de capacete.
 
 ```bash
 uv run python infer_ppe_keypoints.py --video videos/obra.mp4
@@ -220,9 +249,15 @@ outputs/
 ### Anotações
 
 - `P1 OK` verde: pessoa com capacete validado na região da cabeça.
+- `P1 ?` laranja: track novo ou estado ainda inconclusivo.
 - `P1 ALERTA` vermelho: pessoa sem capacete validado.
 - `helmet OK` verde: capacete em posição compatível.
 - `helmet X` vermelho: capacete fora da região esperada ou sem associação.
+
+Em vídeos, o número após `P` é o ID persistente do tracker, e não a posição da
+pessoa na lista de detecções daquele quadro. Pessoas completamente invisíveis não
+recebem caixas congeladas; o ID e o último estado continuam guardados apenas para
+uma possível reassociação dentro do buffer configurado.
 
 Os keypoints são usados internamente e ficam ocultos por padrão para manter a imagem limpa.
 
@@ -276,6 +311,7 @@ uv run python infer_ppe_keypoints.py \
 | `--image` | Imagem de entrada; obrigatória quando `--video` não for usado. |
 | `--video` | Vídeo de entrada; mutuamente exclusivo com `--image`. |
 | `--ppe-checkpoint` | Checkpoint do detector de EPIs. |
+| `--hf-repo-id` | Repositório do Hub usado quando o checkpoint padrão está ausente. |
 | `--output` | Caminho da imagem ou vídeo anotado. |
 | `--report` | Caminho do relatório JSON. |
 | `--ppe-threshold` | Limiar de capacete; padrão `0.35`. |
@@ -286,6 +322,8 @@ uv run python infer_ppe_keypoints.py \
 | `--hide-person-boxes` | Oculta as caixas de pessoas. |
 | `--codec` | Codec de quatro caracteres para saída de vídeo; padrão `mp4v`. |
 | `--max-frames` | Limita a quantidade de quadros processados (teste). |
+| `--track-buffer-seconds` | Retém uma identidade oclusa; padrão `1.0` segundo. |
+| `--helmet-window-seconds` | Janela de confirmação da ausência; padrão `1.0` segundo. |
 
 ## Relatório JSON
 
@@ -297,11 +335,24 @@ O relatório registra a validação por pessoa:
     {
       "id": 1,
       "epis_validados": 1,
-      "epis": { "capacete": { "status": "validado" } }
+      "epis": {
+        "capacete": {
+          "status": "validado",
+          "status_instantaneo": "ausente",
+          "temporalmente_retido": true
+        }
+      }
     }
   ]
 }
 ```
+
+`status_instantaneo` registra a observação do quadro, enquanto `status` é o valor
+estabilizado usado na anotação e em `epis_validados`. Quando os dois divergem,
+`temporalmente_retido` é `true`: uma falha isolada ou uma observação inconclusiva
+não alterou imediatamente o último estado confiável. Um novo track começa como
+`nao_verificavel`; `validado` recupera imediatamente o estado protegido e
+`ausente` exige mais da metade da janela configurada.
 
 Estados possíveis: `validado`, `fora_da_regiao`, `nao_verificavel` e `ausente`.
 
@@ -309,17 +360,26 @@ Estados possíveis: `validado`, `fora_da_regiao`, `nao_verificavel` e `ausente`.
 
 ```text
 .
+├── .github/workflows/               # testes automatizados do repositório
 ├── configs/                         # receitas YAML de treinamento
 │   ├── config_helmet_smoke_576.yaml # teste de VRAM em 576 px
 │   └── config_helmet_only_576.yaml  # treino final focado em capacete
-├── images/                          # imagens de entrada e exemplos anotados
-├── docs/examples/                    # resultados de imagem e momentos de vídeo
+├── docs/
+│   ├── examples/                    # resultados pequenos selecionados
+│   └── PUBLISHING.md                # política GitHub × Hugging Face
+├── huggingface/                     # fontes da model card e dos metadados do Hub
+├── images/                          # imagens leves de demonstração
+├── scripts/publish_hf.py            # valida e publica uma release fechada no Hub
+├── tests/                           # testes unitários sem download de pesos
 ├── models/                          # pesos locais de inferência (ignorado pelo Git)
 │   └── helmet_only_576_best.pth
 ├── construction-ppe/                # dataset original, ignorado pelo Git
 ├── construction-ppe-helmet/         # dataset derivado de uma classe, ignorado pelo Git
+├── videos/                          # entradas locais de vídeo (ignorado pelo Git)
+├── outputs/                         # resultados completos (ignorado pelo Git)
 ├── infer_ppe_keypoints.py           # inferência e validação de capacete
 ├── evaluate_helmet.py                # avaliação COCO do checkpoint no split de teste
+├── model_hub.py                     # resolução local e download automático do modelo
 ├── prepare_helmet_dataset.py         # filtragem e normalização YOLO para helmet
 ├── train.py                         # treinamento do RFDETRSmall
 ├── pyproject.toml                   # dependências e metadados do projeto
@@ -329,9 +389,30 @@ Estados possíveis: `validado`, `fora_da_regiao`, `nao_verificavel` e `ausente`.
 Os arquivos `*_ppe_keypoints.json` e imagens anotadas gerados durante a inferência
 são artefatos locais; escolha explicitamente quais exemplos deseja versionar.
 
+## Publicação do modelo
+
+O manifesto do Hugging Face é validado contra nome, tamanho e SHA-256 antes do
+upload. Para auditar sem publicar:
+
+```bash
+uv run python scripts/publish_hf.py --dry-run
+```
+
+Depois de atualizar checkpoint, métricas e model card, publique com:
+
+```bash
+hf auth login
+uv run python scripts/publish_hf.py
+```
+
+Consulte [a política de publicação](docs/PUBLISHING.md) para a lista exata do que
+pertence ao GitHub, ao Hugging Face e somente ao ambiente local.
+
 ## Limitações
 
 - A regra atual avalia exclusivamente capacete.
 - Pessoas pequenas, oclusas ou com keypoints imprecisos podem gerar resultado inconclusivo.
+- O tracking usa movimento e sobreposição de caixas, sem reconhecimento facial;
+  cruzamentos muito longos ou oclusões maiores que o buffer ainda podem trocar IDs.
 - Calibre os limiares com imagens reais do ambiente de operação.
 - Resultados devem ser revisados antes de decisões críticas de segurança.

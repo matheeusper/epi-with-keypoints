@@ -17,8 +17,10 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from rfdetr import RFDETRSmall
 
+from model_hub import DEFAULT_MODEL_PATH, DEFAULT_MODEL_REPO, resolve_checkpoint
 
-DEFAULT_CHECKPOINT = Path("models/helmet_only_576_best.pth")
+
+DEFAULT_CHECKPOINT = DEFAULT_MODEL_PATH
 DEFAULT_LABELS_DIR = Path("construction-ppe-helmet/test/labels")
 DEFAULT_IMAGES_DIR = Path("construction-ppe-helmet/test/images")
 DEFAULT_REPORT = Path("outputs/evaluation/helmet_test_metrics.json")
@@ -30,6 +32,7 @@ def parse_args() -> argparse.Namespace:
         description="Calcula métricas COCO para o detector de capacete no split de teste."
     )
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
+    parser.add_argument("--hf-repo-id", default=DEFAULT_MODEL_REPO)
     parser.add_argument("--labels-dir", type=Path, default=DEFAULT_LABELS_DIR)
     parser.add_argument("--images-dir", type=Path, default=DEFAULT_IMAGES_DIR)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
@@ -123,8 +126,7 @@ def best_f1_at_iou_50(ground_truth: list[dict], detections: list[dict]) -> dict[
 
 def main() -> None:
     args = parse_args()
-    if not args.checkpoint.is_file():
-        raise FileNotFoundError(f"Checkpoint não encontrado: {args.checkpoint}")
+    checkpoint = resolve_checkpoint(args.checkpoint, args.hf_repo_id)
     label_paths = sorted(args.labels_dir.glob("*.txt"))
     if not label_paths:
         raise FileNotFoundError(f"Nenhum rótulo YOLO encontrado em: {args.labels_dir}")
@@ -146,7 +148,7 @@ def main() -> None:
     coco_ground_truth = COCO()
     coco_ground_truth.dataset = dataset
     coco_ground_truth.createIndex()
-    model = RFDETRSmall.from_checkpoint(str(args.checkpoint))
+    model = RFDETRSmall.from_checkpoint(str(checkpoint))
     detections: list[dict] = []
     for image_id, image_path in enumerate(image_paths, start=1):
         image = np.asarray(Image.open(image_path).convert("RGB"))
@@ -184,7 +186,7 @@ def main() -> None:
     }
     metrics.update(best_f1_at_iou_50(dataset["annotations"], detections))
     report = {
-        "checkpoint": str(args.checkpoint),
+        "checkpoint": str(checkpoint),
         "labels_dir": str(args.labels_dir),
         "images_dir": str(args.images_dir),
         "images": len(image_paths),

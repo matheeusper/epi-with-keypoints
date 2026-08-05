@@ -13,16 +13,22 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
+import supervision as sv
 from PIL import Image, ImageDraw, ImageFont
 from rfdetr import RFDETRKeypointPreview, RFDETRSmall
+from trackers import ByteTrackTracker
+
+from model_hub import DEFAULT_MODEL_PATH, DEFAULT_MODEL_REPO, resolve_checkpoint
 
 
 # Caminho padrão para o melhor checkpoint obtido no treinamento de EPIs.
-DEFAULT_PPE_CHECKPOINT = Path("models/helmet_only_576_best.pth")
+DEFAULT_PPE_CHECKPOINT = DEFAULT_MODEL_PATH
 DEFAULT_OUTPUT_DIR = Path("outputs")
 # Traduções aceitas entre os nomes de classes em português e inglês.
 PPE_ALIASES = {
@@ -38,6 +44,104 @@ IGNORED_DETECTION_CLASSES = {"person", "pessoa", "none", "nenhum", "background",
 COCO_HEAD = (0, 1, 2, 3, 4)
 COCO_WRISTS = (9, 10)
 COCO_ANKLES = (15, 16)
+# O ByteTrack usa detecções fracas somente para prolongar tracks existentes.
+TRACKING_LOW_CONFIDENCE = 0.10
+
+
+class PersonTracker:
+    """Adapta o ByteTrack para produzir IDs válidos desde a primeira detecção."""
+
+    def __init__(self, fps: float, buffer_seconds: float, activation_threshold: float):
+        self._tracker = ByteTrackTracker(
+            # O pacote escala este valor de referência de 30 FPS pelo frame rate real.
+            lost_track_buffer=max(1, round(buffer_seconds * 30)),
+            frame_rate=fps,
+            track_activation_threshold=activation_threshold,
+            high_conf_det_threshold=activation_threshold,
+            minimum_consecutive_frames=1,
+        )
+
+    def update(self, detections: sv.Detections) -> sv.Detections:
+        """Atualiza os tracks e confirma imediatamente os recém-criados."""
+        tracked = self._tracker.update(detections)
+        if tracked.tracker_id is None:
+            return tracked
+
+        # ByteTrack retorna -1 no quadro de criação mesmo com apenas um quadro
+        # consecutivo exigido. As caixas dos novos tracklets ainda são idênticas às
+        # detecções, portanto é seguro ativá-las antes de expor o resultado.
+        for result_index in np.flatnonzero(tracked.tracker_id == -1):
+            result_box = tracked.xyxy[result_index]
+            for track in self._tracker.tracks:
+                if track.tracker_id == -1 and np.allclose(
+                    track.get_state_bbox(), result_box, rtol=0.0, atol=1e-6
+                ):
+                    track.tracker_id = self._tracker._allocate_tracker_id()
+                    tracked.tracker_id[result_index] = track.tracker_id
+                    break
+        return tracked
+
+
+@dataclass
+class HelmetTrackState:
+    """Estado temporal de capacete associado a uma identidade persistente."""
+
+    history: deque[bool | None]
+    stable_status: str = "nao_verificavel"
+    last_seen_frame: int = -1
+
+
+@dataclass
+class HelmetTemporalFilter:
+    """Estabiliza alertas e conserva o estado durante oclusões curtas."""
+
+    window_frames: int
+    buffer_frames: int
+    states: dict[int, HelmetTrackState] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.window_frames <= 0 or self.buffer_frames <= 0:
+            raise ValueError("As janelas temporais devem ter ao menos um quadro.")
+
+    def apply(self, people: list[dict], frame_index: int) -> None:
+        """Aplica o filtro às pessoas visíveis e avança tracks oclusos."""
+        active_ids = {int(person["id"]) for person in people}
+        for track_id, state in list(self.states.items()):
+            if track_id not in active_ids:
+                state.history.append(None)
+            if frame_index - state.last_seen_frame >= self.buffer_frames:
+                del self.states[track_id]
+
+        for person in people:
+            track_id = int(person["id"])
+            state = self.states.get(track_id)
+            if state is None:
+                state = HelmetTrackState(history=deque(maxlen=self.window_frames))
+                self.states[track_id] = state
+            state.last_seen_frame = frame_index
+
+            helmet = person["ppe"]["capacete"]
+            instantaneous = helmet["status"]
+            if instantaneous == "validado":
+                # Uma validação positiva recupera imediatamente o estado e invalida
+                # votos antigos de ausência.
+                state.history.clear()
+                state.history.append(False)
+                state.stable_status = "validado"
+            elif instantaneous == "nao_verificavel":
+                state.history.append(None)
+            else:
+                state.history.append(True)
+                absent_votes = sum(value is True for value in state.history)
+                if absent_votes > self.window_frames / 2:
+                    state.stable_status = "ausente"
+
+            helmet["status_instantaneo"] = instantaneous
+            helmet["status"] = state.stable_status
+            helmet["temporalmente_retido"] = state.stable_status != instantaneous
+            person["conformes"] = sum(
+                value["status"] == "validado" for value in person["ppe"].values()
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +157,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_PPE_CHECKPOINT,
         help=f"Checkpoint treinado de EPIs (padrão: {DEFAULT_PPE_CHECKPOINT}).",
+    )
+    parser.add_argument(
+        "--hf-repo-id",
+        default=DEFAULT_MODEL_REPO,
+        help=f"Repositório usado para baixar o checkpoint padrão (padrão: {DEFAULT_MODEL_REPO}).",
     )
     parser.add_argument(
         "--output",
@@ -96,11 +205,27 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Processa no máximo esta quantidade de quadros (útil para testes).",
     )
+    parser.add_argument(
+        "--track-buffer-seconds",
+        type=float,
+        default=1.0,
+        help="Tempo de retenção de uma identidade oclusa em vídeo; padrão 1.0 s.",
+    )
+    parser.add_argument(
+        "--helmet-window-seconds",
+        type=float,
+        default=1.0,
+        help="Janela usada para confirmar ausência de capacete em vídeo; padrão 1.0 s.",
+    )
     args = parser.parse_args()
     if len(args.codec) != 4:
         parser.error("--codec deve ter exatamente quatro caracteres, por exemplo mp4v.")
     if args.max_frames is not None and args.max_frames <= 0:
         parser.error("--max-frames deve ser maior que zero.")
+    if args.track_buffer_seconds <= 0:
+        parser.error("--track-buffer-seconds deve ser maior que zero.")
+    if args.helmet_window_seconds <= 0:
+        parser.error("--helmet-window-seconds deve ser maior que zero.")
     return args
 
 
@@ -237,6 +362,37 @@ def suppress_duplicate_people(keypoints: object, max_iou: float) -> np.ndarray:
     return np.array(sorted(kept), dtype=int)
 
 
+def track_people(
+    keypoints: object,
+    person_indices: np.ndarray,
+    tracker: PersonTracker,
+    visible_threshold: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rastreia todas as poses e retorna apenas pessoas visíveis e confirmadas."""
+    all_boxes = np.asarray(getattr(keypoints, "data", {}).get("xyxy", []), dtype=float)
+    all_scores = np.asarray(
+        getattr(keypoints, "detection_confidence", np.ones(len(all_boxes))), dtype=float
+    )
+    detections = sv.Detections(
+        xyxy=all_boxes[person_indices],
+        confidence=all_scores[person_indices],
+        class_id=np.zeros(len(person_indices), dtype=int),
+        data={"source_index": person_indices.copy()},
+    )
+    tracked = tracker.update(detections)
+    tracker_ids = np.asarray(
+        tracked.tracker_id if tracked.tracker_id is not None else [], dtype=int
+    )
+    source_indices = np.asarray(tracked.data.get("source_index", []), dtype=int)
+    if not len(source_indices):
+        return np.array([], dtype=int), np.array([], dtype=int)
+
+    # Detecções fracas atualizam o movimento do tracker, porém não são desenhadas,
+    # associadas a capacetes nem interpretadas como ausência.
+    visible = (tracker_ids >= 0) & (all_scores[source_indices] >= visible_threshold)
+    return source_indices[visible], tracker_ids[visible] + 1
+
+
 def validate_position(kind: str, center: np.ndarray, person: dict) -> str:
     """Valida a região do EPI com keypoints COCO; nunca infere ausência por oclusão."""
     # A altura da pessoa normaliza as distâncias e evita regras fixas em pixels.
@@ -286,6 +442,7 @@ def fuse_detections(
     keypoints: object,
     min_kp_confidence: float,
     person_indices: np.ndarray,
+    person_ids: np.ndarray | None = None,
 ) -> tuple[list[dict], dict[int, dict]]:
     """Associa EPIs à caixa de pessoa mais próxima e valida a geometria corporal."""
     # Cada pessoa possui uma caixa corporal e uma lista de keypoints prevista pelo modelo de pose.
@@ -301,9 +458,13 @@ def fuse_detections(
     points = all_points[person_indices]
     confidences = all_confidences[person_indices]
     visibility = all_visibility[person_indices]
+    if person_ids is None:
+        person_ids = np.arange(1, len(boxes) + 1, dtype=int)
+    if len(person_ids) != len(boxes):
+        raise ValueError("A quantidade de IDs deve corresponder às pessoas rastreadas.")
     # Monta a estrutura que será escrita no relatório JSON ao final da execução.
     people = [
-        {"id": index + 1, "box": np.asarray(box, dtype=float), "points": points[index],
+        {"id": int(person_ids[index]), "box": np.asarray(box, dtype=float), "points": points[index],
          "visible": visibility[index] & (confidences[index] >= min_kp_confidence),
          "ppe": {kind: {"status": "ausente", "detections": []} for kind in REQUIRED_PPE}}
         for index, box in enumerate(np.asarray(boxes))
@@ -390,11 +551,10 @@ def draw_keypoints(
     )
     points_per_person = all_points[person_indices]
     point_confidences = all_point_confidences[person_indices]
-    person_confidences = np.asarray(getattr(keypoints, "detection_confidence"))[person_indices]
     visible = all_visible[person_indices]
 
-    for person_index, (points, confidences, is_visible, person_confidence) in enumerate(
-        zip(points_per_person, point_confidences, visible, person_confidences), start=1
+    for person, points, confidences, is_visible in zip(
+        people, points_per_person, point_confidences, visible
     ):
         # Pontos de baixa confiança não são desenhados na visualização opcional.
         valid = (confidences >= min_confidence) & is_visible
@@ -405,16 +565,17 @@ def draw_keypoints(
                     draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="#007aff")
 
         # A caixa azul identifica a pessoa; as caixas vermelhas identificam os EPIs.
-        boxes = np.asarray(getattr(keypoints, "data", {}).get("xyxy", []))[person_indices]
-        if draw_person_boxes and boxes is not None and len(boxes) >= person_index:
-            x1, y1, x2, y2 = np.asarray(boxes[person_index - 1]).astype(float)
+        if draw_person_boxes:
+            x1, y1, x2, y2 = np.asarray(person["box"]).astype(float)
             # A pessoa fica verde apenas quando há capacete na região esperada da cabeça.
-            helmet_status = people[person_index - 1]["ppe"]["capacete"]["status"]
+            helmet_status = person["ppe"]["capacete"]["status"]
             is_protected = helmet_status == "validado"
-            color = "#34c759" if is_protected else "#ff3b30"
+            is_unknown = helmet_status == "nao_verificavel"
+            color = "#34c759" if is_protected else "#ff9500" if is_unknown else "#ff3b30"
             # Usa somente caracteres ASCII, pois a fonte padrão do Pillow não
             # possui cobertura garantida para símbolos como "✓".
-            label = f"P{person_index} OK" if is_protected else f"P{person_index} ALERTA"
+            suffix = "OK" if is_protected else "?" if is_unknown else "ALERTA"
+            label = f"P{person['id']} {suffix}"
             draw.rectangle((x1, y1, x2, y2), outline=color, width=3)
             draw_label(
                 draw,
@@ -432,18 +593,42 @@ def annotate_frame(
     ppe_model: RFDETRSmall,
     keypoint_model: RFDETRKeypointPreview,
     args: argparse.Namespace,
+    tracker: PersonTracker | None = None,
+    temporal_filter: HelmetTemporalFilter | None = None,
+    frame_index: int = 0,
 ) -> tuple[Image.Image, int, int, dict]:
     """Executa a pipeline completa em um frame RGB e retorna a imagem e o relatório."""
     ppe_detections = ppe_model.predict(image_array, threshold=args.ppe_threshold)
-    people_keypoints = keypoint_model.predict(image_array, threshold=args.keypoint_threshold)
+    pose_threshold = (
+        min(TRACKING_LOW_CONFIDENCE, args.keypoint_threshold)
+        if tracker is not None
+        else args.keypoint_threshold
+    )
+    people_keypoints = keypoint_model.predict(image_array, threshold=pose_threshold)
 
     annotated = Image.fromarray(image_array).convert("RGB")
     draw = ImageDraw.Draw(annotated)
     occupied_labels: list[tuple[int, int, int, int]] = []
     person_indices = suppress_duplicate_people(people_keypoints, args.person_nms_iou)
+    person_ids = None
+    if tracker is not None:
+        person_indices, person_ids = track_people(
+            people_keypoints, person_indices, tracker, args.keypoint_threshold
+        )
     people, validation = fuse_detections(
-        ppe_detections, people_keypoints, args.keypoint_confidence, person_indices
+        ppe_detections,
+        people_keypoints,
+        args.keypoint_confidence,
+        person_indices,
+        person_ids,
     )
+    if temporal_filter is not None:
+        temporal_filter.apply(people, frame_index)
+    else:
+        for person in people:
+            for item in person["ppe"].values():
+                item["status_instantaneo"] = item["status"]
+                item["temporalmente_retido"] = False
     ppe_count = draw_ppe(
         draw, ppe_detections, occupied_labels, annotated.size, validation
     )
@@ -530,6 +715,11 @@ def infer_video(args: argparse.Namespace, ppe_model: RFDETRSmall, keypoint_model
 
     fps = capture.get(cv2.CAP_PROP_FPS)
     fps = fps if np.isfinite(fps) and fps > 0 else 30.0
+    tracker = PersonTracker(fps, args.track_buffer_seconds, args.keypoint_threshold)
+    temporal_filter = HelmetTemporalFilter(
+        window_frames=max(1, round(fps * args.helmet_window_seconds)),
+        buffer_frames=max(1, round(fps * args.track_buffer_seconds)),
+    )
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     if width <= 0 or height <= 0:
@@ -556,7 +746,13 @@ def infer_video(args: argparse.Namespace, ppe_model: RFDETRSmall, keypoint_model
                 break
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             annotated, ppe_count, people_count, frame_report = annotate_frame(
-                frame_rgb, ppe_model, keypoint_model, args
+                frame_rgb,
+                ppe_model,
+                keypoint_model,
+                args,
+                tracker=tracker,
+                temporal_filter=temporal_filter,
+                frame_index=frame_index,
             )
             writer.write(cv2.cvtColor(np.asarray(annotated), cv2.COLOR_RGB2BGR))
             frame_report.update({"quadro": frame_index, "tempo_segundos": frame_index / fps})
@@ -575,6 +771,11 @@ def infer_video(args: argparse.Namespace, ppe_model: RFDETRSmall, keypoint_model
     save_report(report_path, {
         "video": str(args.video),
         "fps": fps,
+        "tracking": {
+            "buffer_segundos": args.track_buffer_seconds,
+            "janela_capacete_segundos": args.helmet_window_seconds,
+            "regra_ausencia": "maioria_estrita",
+        },
         "quadros_processados": frame_index,
         "epis_detectados_total": total_ppe,
         "pessoas_detectadas_total": total_people,
@@ -591,9 +792,8 @@ def main() -> None:
     input_path = args.image or args.video
     if input_path is None or not input_path.is_file():
         raise FileNotFoundError(f"Arquivo de entrada não encontrado: {input_path}")
-    if not args.ppe_checkpoint.is_file():
-        raise FileNotFoundError(f"Checkpoint de EPIs não encontrado: {args.ppe_checkpoint}")
-    ppe_model, keypoint_model = load_models(args.ppe_checkpoint)
+    checkpoint = resolve_checkpoint(args.ppe_checkpoint, args.hf_repo_id)
+    ppe_model, keypoint_model = load_models(checkpoint)
     if args.image is not None:
         infer_image(args, ppe_model, keypoint_model)
     else:

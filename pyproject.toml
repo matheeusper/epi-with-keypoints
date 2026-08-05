@@ -1,10 +1,18 @@
 [project]
 name = "epi-with-keypoints"
 version = "0.1.0"
-description = "Add your description here"
+description = "Detecção de capacetes por pessoa com RF-DETR, keypoints e tracking temporal."
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "huggingface-hub>=1.24,<2",
     "opencv-python-headless>=4.10.0.84",
     "rfdetr[loggers,train]>=1.8.3",
+    "supervision>=0.29,<0.30",
     "torch>=2.13.0",
+    "trackers>=2.5,<3",
 ]
+
+[project.urls]
+Repository = "https://github.com/matheeusper/epi-with-keypoints"
+Model = "https://huggingface.co/matheeusper/epi-with-keypoints"

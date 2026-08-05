@@ -1,0 +1,35 @@
+{
+  "architecture": "RFDETRSmall",
+  "framework": "PyTorch",
+  "input_resolution": 576,
+  "classes": [
+    {
+      "id": 0,
+      "name": "helmet"
+    }
+  ],
+  "recommended_detection_threshold": 0.35,
+  "checkpoint": {
+    "filename": "helmet_only_576_best.pth",
+    "size_bytes": 127784231,
+    "sha256": "7bf0a9009e7b6bdc4d1082932845e621b886c8a988c6277597f1c2105f48c690"
+  },
+  "training": {
+    "seed": 42,
+    "completed_epochs": 11,
+    "global_steps": 781
+  },
+  "test_metrics": {
+    "images": 141,
+    "ground_truth_helmets": 192,
+    "map_50_95": 0.5553,
+    "map_50": 0.95,
+    "map_75": 0.5866,
+    "mar_100": 0.663,
+    "precision_50": 0.9375,
+    "recall_50": 0.9375,
+    "f1_50": 0.9375,
+    "confidence_at_best_f1": 0.435
+  },
+  "source_repository": "https://github.com/matheeusper/epi-with-keypoints"
+}

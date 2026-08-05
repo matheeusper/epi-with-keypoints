@@ -941,16 +941,22 @@ name = "epi-with-keypoints"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "huggingface-hub" },
     { name = "opencv-python-headless" },
     { name = "rfdetr", extra = ["loggers", "train"] },
+    { name = "supervision" },
     { name = "torch" },
+    { name = "trackers" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub", specifier = ">=1.24,<2" },
     { name = "opencv-python-headless", specifier = ">=4.10.0.84" },
     { name = "rfdetr", extras = ["loggers", "train"], specifier = ">=1.8.3" },
+    { name = "supervision", specifier = ">=0.29,<0.30" },
     { name = "torch", specifier = ">=2.13.0" },
+    { name = "trackers", specifier = ">=2.5,<3" },
 ]
 
 [[package]]
@@ -5216,6 +5222,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dd/84/da0e5038228fa34dfd77c5026b173ed035d2a3ba31f1077590c013de2bff/tqdm-4.69.1.tar.gz", hash = "sha256:2be21080a0ce17e902c2f1baeb6a74bf551b67bbdfa4bc0109fad471d0b4cb0d", size = 793046, upload-time = "2026-07-24T14:22:02.08Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/01/50/5817619a0fca56aff06383dbfde7ae017b3ca383915b3f1e4713164273cf/tqdm-4.69.1-py3-none-any.whl", hash = "sha256:0a654b96f7a2660cceb615b56f307ec2bef96c515409014a429a561981ab52b4", size = 675452, upload-time = "2026-07-24T14:22:00.048Z" },
+]
+
+[[package]]
+name = "trackers"
+version = "2.5.0.post0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version != '3.11.*'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "opencv-python" },
+    { name = "pydeprecate" },
+    { name = "requests" },
+    { name = "rich" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "supervision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/88/932d456b7e7419cb5e991585f649bf3c048737c76e57f55c9f70c2737503/trackers-2.5.0.post0.tar.gz", hash = "sha256:fc30e696a5562778255ada7a36b41f73009ecda07a3481698a17da8dabb4704e", size = 118401, upload-time = "2026-07-09T13:20:24.231Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/c7/a4e267efd2c0c14df812338c597b5bc1f911d2f6073fe03178369cf35912/trackers-2.5.0.post0-py3-none-any.whl", hash = "sha256:bd2e1d1a9a0186a5d2aecfa0ea028f74b37bf8f662ba8e07407df3cc45183737", size = 144264, upload-time = "2026-07-09T13:20:22.884Z" },
 ]
 
 [[package]]

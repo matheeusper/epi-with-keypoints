@@ -61,7 +61,7 @@ Essa combinação traz três vantagens principais:
 - Treinamento configurável por YAML.
 - Receitas para treino padrão, rápido, com aumentos agressivos e learning rate menor.
 - Inferência combinada de capacete e pose humana.
-- Associação automática do capacete à pessoa mais próxima.
+- Associação do capacete à cabeça mais compatível.
 - Tracking de pessoas com IDs persistentes em vídeos.
 - Estabilização temporal dos alertas de ausência de capacete.
 - Validação geométrica pela região da cabeça.
@@ -69,7 +69,8 @@ Essa combinação traz três vantagens principais:
 
 ## Instalação
 
-Requisitos: Python 3.10+, [uv](https://docs.astral.sh/uv/) e, preferencialmente, GPU CUDA.
+Requisitos: Python 3.10+, [uv](https://docs.astral.sh/uv/) e, preferencialmente,
+uma GPU CUDA.
 
 ```bash
 git clone git@github.com:matheeusper/epi-with-keypoints.git
@@ -164,13 +165,6 @@ A limitação é aplicada somente ao split de treino. Validação e teste mantê
 as imagens para que as métricas representem o dataset completo. Com `--classes
 all`, todas as imagens também são mantidas.
 
-Para reproduzir o treinamento do checkpoint de capacete, mantenha a seleção
-explícita no comando:
-
-```bash
-uv run python train.py --config configs/helmet_576.yaml --classes helmet
-```
-
 | Receita | Uso |
 | --- | --- |
 | `configs/base.yaml` | Receita base para treinamento multiclasse. |
@@ -235,7 +229,9 @@ pelo `data.yaml`, sem modificar o dataset.
 
 ## Inferência e validação de capacete
 
-O [infer_ppe_keypoints.py](infer_ppe_keypoints.py) carrega o checkpoint treinado, o modelo de keypoints e a imagem. Na primeira execução, os pesos de keypoints podem ser baixados automaticamente.
+O [infer_ppe_keypoints.py](infer_ppe_keypoints.py) carrega o checkpoint treinado,
+o modelo de keypoints e a mídia de entrada. Na primeira execução, os pesos de
+keypoints podem ser baixados automaticamente.
 
 ```bash
 uv run python infer_ppe_keypoints.py \
@@ -256,6 +252,14 @@ entrada. Por padrão, identidades oclusas são conservadas por até 1 segundo e 
 ausência só vira alerta quando ocupa a maioria estrita de uma janela de 1 segundo.
 Detecções de pessoa abaixo do limiar principal podem prolongar um track existente,
 mas não são desenhadas nem contam como ausência de capacete.
+
+```bash
+uv run python infer_ppe_keypoints.py --video videos/obra.mp4
+```
+
+O comando cria `outputs/obra/annotated/obra_ppe_keypoints.mp4` e
+`outputs/obra/reports/obra_ppe_keypoints.json`. O relatório inclui o resultado de
+cada quadro e o respectivo instante em segundos.
 
 ### Validação por sobreposição, track e tempo
 
@@ -313,14 +317,7 @@ buffer expira, o estado antigo é descartado e um novo track começa como
 Imagens estáticas não usam tracking nem histórico temporal: nelas, a associação e
 a validação geométrica são calculadas uma única vez.
 
-```bash
-uv run python infer_ppe_keypoints.py --video videos/obra.mp4
-```
-
-O comando acima cria `outputs/obra/annotated/obra_ppe_keypoints.mp4` e
-`outputs/obra/reports/obra_ppe_keypoints.json`. O JSON inclui o resultado de cada
-quadro e o respectivo instante em segundos. Para escolher os destinos e testar
-apenas parte do vídeo:
+Para escolher os destinos e testar apenas parte do vídeo:
 
 ```bash
 uv run python infer_ppe_keypoints.py \
@@ -443,7 +440,9 @@ não alterou imediatamente o último estado confiável. Um novo track começa co
 `nao_verificavel`; `validado` recupera imediatamente o estado protegido e
 `ausente` exige mais da metade da janela configurada.
 
-Estados possíveis: `validado`, `fora_da_regiao`, `nao_verificavel` e `ausente`.
+O estado temporal exibido por pessoa pode ser `validado`, `nao_verificavel` ou
+`ausente`. O valor `fora_da_regiao` descreve a validação geométrica instantânea de
+uma detecção de capacete.
 
 ## Estrutura
 

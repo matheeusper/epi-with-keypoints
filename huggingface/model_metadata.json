@@ -11,25 +11,44 @@
   "recommended_detection_threshold": 0.35,
   "checkpoint": {
     "filename": "helmet_only_576_best.pth",
-    "size_bytes": 127784231,
-    "sha256": "7bf0a9009e7b6bdc4d1082932845e621b886c8a988c6277597f1c2105f48c690"
+    "size_bytes": 127830863,
+    "sha256": "0e6741285fe7bf2a19cd18b37e558cf98e8ee1730dbb4f591ee0b2b75fb8568e"
   },
   "training": {
     "seed": 42,
-    "completed_epochs": 11,
-    "global_steps": 781
+    "selected_epoch": 19,
+    "completed_epochs": 20,
+    "global_steps": 2000
   },
   "test_metrics": {
-    "images": 141,
-    "ground_truth_helmets": 192,
-    "map_50_95": 0.5553,
-    "map_50": 0.95,
-    "map_75": 0.5866,
-    "mar_100": 0.663,
-    "precision_50": 0.9375,
-    "recall_50": 0.9375,
-    "f1_50": 0.9375,
-    "confidence_at_best_f1": 0.435
+    "images": 1234,
+    "ground_truth_helmets": 597,
+    "map_50_95": 0.5890050576948107,
+    "map_50": 0.8961793948081103,
+    "map_75": 0.6740506908162793,
+    "mar_100": 0.7408710217755444,
+    "precision_50": 0.8667736757624398,
+    "recall_50": 0.9045226130653267,
+    "f1_50": 0.8852459016393442,
+    "confidence_at_best_f1": 0.5697923302650452
   },
-  "source_repository": "https://github.com/matheeusper/epi-with-keypoints"
+  "source_repository": "https://github.com/matheeusper/epi-with-keypoints",
+  "source_dataset": {
+    "repo_id": "51ddhesh/PPE_Detection",
+    "url": "https://huggingface.co/datasets/51ddhesh/PPE_Detection",
+    "license": "CC-BY-4.0",
+    "classes": [
+      "Gloves",
+      "Vest",
+      "goggles",
+      "helmet",
+      "mask",
+      "safety_shoe"
+    ],
+    "splits": {
+      "train_images": 8774,
+      "validation_images": 2070,
+      "test_images": 1234
+    }
+  }
 }

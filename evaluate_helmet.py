@@ -1,9 +1,4 @@
-"""Avalia o checkpoint de capacete no split YOLO derivado do dataset de EPI.
-
-O dataset ``construction-ppe-helmet`` contém os rótulos de uma única classe,
-enquanto as imagens permanecem no dataset de origem ``construction-ppe``. Este
-script reúne os dois diretórios e calcula as métricas COCO de detecção.
-"""
+"""Avalia um checkpoint de uma classe diretamente em um split YOLO."""
 
 from __future__ import annotations
 
@@ -12,6 +7,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import yaml
 from PIL import Image
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -21,8 +17,10 @@ from model_hub import DEFAULT_MODEL_PATH, DEFAULT_MODEL_REPO, resolve_checkpoint
 
 
 DEFAULT_CHECKPOINT = DEFAULT_MODEL_PATH
-DEFAULT_LABELS_DIR = Path("construction-ppe-helmet/test/labels")
-DEFAULT_IMAGES_DIR = Path("construction-ppe-helmet/test/images")
+DEFAULT_DATASET_DIR = Path("datasets/PPE_Detection")
+DEFAULT_DATA_YAML = DEFAULT_DATASET_DIR / "data.yaml"
+DEFAULT_LABELS_DIR = DEFAULT_DATASET_DIR / "test/labels"
+DEFAULT_IMAGES_DIR = DEFAULT_DATASET_DIR / "test/images"
 DEFAULT_REPORT = Path("outputs/evaluation/helmet_test_metrics.json")
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
 
@@ -35,7 +33,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hf-repo-id", default=DEFAULT_MODEL_REPO)
     parser.add_argument("--labels-dir", type=Path, default=DEFAULT_LABELS_DIR)
     parser.add_argument("--images-dir", type=Path, default=DEFAULT_IMAGES_DIR)
+    parser.add_argument("--data-yaml", type=Path, default=DEFAULT_DATA_YAML)
+    parser.add_argument(
+        "--class",
+        dest="target_class",
+        default="helmet",
+        help="Nome ou ID original da classe no data.yaml (padrão: helmet).",
+    )
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        help="Força a resolução ao carregar um checkpoint sem model_config.",
+    )
     parser.add_argument(
         "--prediction-threshold",
         type=float,
@@ -45,29 +55,61 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def image_path_for(label_path: Path, images_dir: Path) -> Path:
-    """Localiza a imagem de origem correspondente a um rótulo YOLO."""
-    for suffix in IMAGE_SUFFIXES:
-        candidate = images_dir / f"{label_path.stem}{suffix}"
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(f"Imagem para {label_path.name} não encontrada em {images_dir}")
+def load_class_names(data_yaml: Path) -> dict[int, str]:
+    data = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
+    raw_names = data.get("names")
+    if isinstance(raw_names, list):
+        return {index: str(name) for index, name in enumerate(raw_names)}
+    if isinstance(raw_names, dict):
+        return {int(class_id): str(name) for class_id, name in raw_names.items()}
+    raise ValueError(f"Campo 'names' inválido em {data_yaml}.")
 
 
-def yolo_annotations(label_path: Path, image_id: int, width: int, height: int) -> list[dict]:
-    """Converte caixas YOLO normalizadas em anotações COCO da classe helmet."""
+def resolve_class(target: str, names: dict[int, str]) -> tuple[int, str]:
+    if target.isdigit():
+        class_id = int(target)
+        if class_id not in names:
+            raise ValueError(f"ID de classe inexistente: {class_id}.")
+        return class_id, names[class_id]
+    for class_id, name in names.items():
+        if name.casefold() == target.casefold():
+            return class_id, name
+    available = ", ".join(f"{class_id}:{name}" for class_id, name in sorted(names.items()))
+    raise ValueError(f"Classe desconhecida: {target!r}. Disponíveis: {available}")
+
+
+def yolo_annotations(
+    label_path: Path, image_id: int, width: int, height: int, source_class_id: int
+) -> list[dict]:
+    """Converte caixas ou polígonos YOLO da classe escolhida para caixas COCO."""
     annotations: list[dict] = []
+    if not label_path.is_file():
+        return annotations
     for line in label_path.read_text(encoding="utf-8").splitlines():
         values = line.split()
-        if len(values) != 5:
+        if len(values) < 5:
             raise ValueError(f"Rótulo inválido em {label_path}: {line!r}")
-        class_id, center_x, center_y, box_width, box_height = map(float, values)
-        if int(class_id) != 0:
+        try:
+            class_id = int(values[0])
+            coordinates = [float(value) for value in values[1:]]
+        except ValueError as error:
+            raise ValueError(f"Rótulo inválido em {label_path}: {line!r}") from error
+        if class_id != source_class_id:
             continue
-        box_width *= width
-        box_height *= height
-        x = center_x * width - box_width / 2
-        y = center_y * height - box_height / 2
+        if len(coordinates) == 4:
+            center_x, center_y, box_width, box_height = coordinates
+            x = (center_x - box_width / 2) * width
+            y = (center_y - box_height / 2) * height
+            box_width *= width
+            box_height *= height
+        elif len(coordinates) >= 6 and len(coordinates) % 2 == 0:
+            xs, ys = coordinates[0::2], coordinates[1::2]
+            x_min, x_max = min(xs) * width, max(xs) * width
+            y_min, y_max = min(ys) * height, max(ys) * height
+            x, y = x_min, y_min
+            box_width, box_height = x_max - x_min, y_max - y_min
+        else:
+            raise ValueError(f"Rótulo inválido em {label_path}: {line!r}")
         annotations.append({
             "image_id": image_id,
             "category_id": 1,
@@ -126,29 +168,44 @@ def best_f1_at_iou_50(ground_truth: list[dict], detections: list[dict]) -> dict[
 
 def main() -> None:
     args = parse_args()
+    if args.resolution is not None and args.resolution <= 0:
+        raise ValueError("--resolution deve ser maior que zero.")
     checkpoint = resolve_checkpoint(args.checkpoint, args.hf_repo_id)
-    label_paths = sorted(args.labels_dir.glob("*.txt"))
-    if not label_paths:
-        raise FileNotFoundError(f"Nenhum rótulo YOLO encontrado em: {args.labels_dir}")
+    names = load_class_names(args.data_yaml)
+    source_class_id, class_name = resolve_class(args.target_class, names)
+    image_paths = sorted(
+        path for path in args.images_dir.iterdir()
+        if path.is_file() and path.suffix in IMAGE_SUFFIXES
+    )
+    if not image_paths:
+        raise FileNotFoundError(f"Nenhuma imagem encontrada em: {args.images_dir}")
 
-    dataset = {"images": [], "annotations": [], "categories": [{"id": 1, "name": "helmet"}]}
-    image_paths: list[Path] = []
+    dataset = {"images": [], "annotations": [], "categories": [{"id": 1, "name": class_name}]}
     annotation_id = 1
-    for image_id, label_path in enumerate(label_paths, start=1):
-        image_path = image_path_for(label_path, args.images_dir)
+    for image_id, image_path in enumerate(image_paths, start=1):
+        label_path = args.labels_dir / f"{image_path.stem}.txt"
         with Image.open(image_path) as image:
             width, height = image.size
         dataset["images"].append({"id": image_id, "file_name": image_path.name, "width": width, "height": height})
-        for annotation in yolo_annotations(label_path, image_id, width, height):
+        for annotation in yolo_annotations(
+            label_path, image_id, width, height, source_class_id
+        ):
             annotation["id"] = annotation_id
             dataset["annotations"].append(annotation)
             annotation_id += 1
-        image_paths.append(image_path)
+    if not dataset["annotations"]:
+        raise ValueError(f"Nenhuma anotação da classe {class_name!r} encontrada no teste.")
 
     coco_ground_truth = COCO()
     coco_ground_truth.dataset = dataset
     coco_ground_truth.createIndex()
-    model = RFDETRSmall.from_checkpoint(str(checkpoint))
+    load_args = {"resolution": args.resolution} if args.resolution is not None else {}
+    model = RFDETRSmall.from_checkpoint(str(checkpoint), **load_args)
+    evaluation_resolution = int(model.model_config.resolution)
+    print(
+        f"Avaliando {class_name!r} (ID original {source_class_id}) em "
+        f"{len(image_paths)} imagens, resolução {evaluation_resolution}px."
+    )
     detections: list[dict] = []
     for image_id, image_path in enumerate(image_paths, start=1):
         image = np.asarray(Image.open(image_path).convert("RGB"))
@@ -187,12 +244,16 @@ def main() -> None:
     metrics.update(best_f1_at_iou_50(dataset["annotations"], detections))
     report = {
         "checkpoint": str(checkpoint),
+        "class_name": class_name,
+        "source_class_id": source_class_id,
+        "data_yaml": str(args.data_yaml),
         "labels_dir": str(args.labels_dir),
         "images_dir": str(args.images_dir),
         "images": len(image_paths),
-        "ground_truth_helmets": len(dataset["annotations"]),
+        "ground_truth_objects": len(dataset["annotations"]),
         "detections": len(detections),
         "prediction_threshold": args.prediction_threshold,
+        "evaluation_resolution": evaluation_resolution,
         "metrics": metrics,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)

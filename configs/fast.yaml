@@ -1,0 +1,28 @@
+# Receita multiclasse curta para experimentos rápidos.
+general:
+  output_dir: "output_fast_train"
+  dataset_dir: "datasets/PPE_Detection"
+  device: "cuda"
+  seed: 42
+
+model:
+  resolution: 512
+  gradient_checkpointing: true
+
+training:
+  epochs: 50
+  batch_size: 4
+  grad_accum_steps: 4
+  lr: 2e-4
+  lr_encoder: 3e-4
+
+early_stopping:
+  enabled: true
+  patience: 8
+  min_delta: 0.001
+  use_ema: true
+
+augmentations:
+  HorizontalFlip: {p: 0.5}
+  RandomBrightnessContrast: {p: 0.4}
+  ShiftScaleRotate: {shift_limit: 0.05, scale_limit: 0.15, rotate_limit: 15, p: 0.5}

@@ -257,6 +257,62 @@ ausência só vira alerta quando ocupa a maioria estrita de uma janela de 1 segu
 Detecções de pessoa abaixo do limiar principal podem prolongar um track existente,
 mas não são desenhadas nem contam como ausência de capacete.
 
+### Validação por sobreposição, track e tempo
+
+Em vídeo, a decisão não é tomada apenas olhando um quadro isolado. A pipeline
+combina validação espacial, identidade persistente e histórico temporal:
+
+```text
+Detecções do quadro
+        │
+        ▼
+remove pessoas duplicadas por sobreposição (IoU)
+        │
+        ▼
+ByteTrack mantém um track_id para cada pessoa
+        │
+        ▼
+capacete é associado à cabeça mais compatível
+        │
+        ▼
+estado instantâneo entra no histórico daquele track_id
+        │
+        ▼
+regra temporal produz OK, inconclusivo ou ALERTA
+```
+
+**Sobreposição espacial.** Primeiro, caixas de pessoa quase idênticas são
+suprimidas usando IoU; por padrão, duas caixas com IoU a partir de `0.75` não são
+mantidas como pessoas diferentes. Quando pessoas reais aparecem muito próximas e
+suas caixas corporais se sobrepõem, o capacete não é atribuído somente pela caixa
+do corpo: o algoritmo compara o centro do capacete com os keypoints de cabeça de
+cada pessoa e escolhe a cabeça mais compatível. A caixa corporal é usada apenas
+quando não existem keypoints confiáveis da cabeça.
+
+**Validação por track.** O ByteTrack entrega um `track_id` persistente para cada
+pessoa. Cada ID possui seu próprio histórico de capacete; portanto, observações de
+duas pessoas próximas não são misturadas. Detecções fracas podem atualizar o
+movimento de um track existente, mas não são exibidas e não geram voto de
+ausência.
+
+**Validação temporal.** Para cada `track_id`, o estado instantâneo de cada quadro
+é guardado em uma janela de 1 segundo por padrão. Um capacete validado recupera o
+estado `OK` imediatamente e limpa votos antigos de ausência. Uma ausência ou um
+capacete fora da região só produz `ALERTA` quando ocupa mais da metade da janela.
+Quando a cabeça não pode ser verificada, o quadro é inconclusivo e não conta como
+ausência.
+
+**Sobreposição ou oclusão temporária.** Se uma pessoa passar atrás de outra ou
+ficar escondida por alguns quadros, o tracker conserva seu ID e o último estado
+confiável por até 1 segundo. Durante esse intervalo, a pipeline não inventa uma
+caixa nem transforma automaticamente a oclusão em ausência de capacete. Se a
+pessoa reaparecer dentro do buffer, o mesmo histórico continua; depois que o
+buffer expira, o estado antigo é descartado e um novo track começa como
+`nao_verificavel`.
+
+Imagens estáticas não usam tracking nem histórico temporal: nelas, a associação e
+a validação geométrica são calculadas uma única vez.
+
 ```bash
 uv run python infer_ppe_keypoints.py --video videos/obra.mp4
 ```
